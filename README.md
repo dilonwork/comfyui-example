@@ -69,14 +69,13 @@ The scripts queue the workflow via `POST /prompt`, wait on the websocket for
 completion, then download the result with `GET /view`. Point at a remote
 server with `COMFYUI_SERVER=host:8188`.
 
-## Sample output
-
-Generated on CPU with the basic workflow (slow but real):
-
-![Sample output from the basic txt2img workflow](docs/images/03-output.png)
-
 ## Notes
 
 - Workflows are in **API format**: they load in the UI *and* work with the API examples directly.
 - Screenshots in `docs/images/` are real captures of ComfyUI running locally (CPU mode).
+  `02-workflow.png` shows the basic workflow loaded — the red border on
+  Load Checkpoint just means no checkpoint file is installed yet.
+- Both workflows were validated against a live ComfyUI server via `POST /prompt`:
+  node graph, types and wiring check out; the only errors are the missing
+  checkpoint file (and, for img2img, the not-yet-uploaded input image).
 - Tested against ComfyUI latest (Oct 2026). Custom nodes are not required for anything here.
