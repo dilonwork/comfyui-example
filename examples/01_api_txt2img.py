@@ -2,7 +2,10 @@
 """Queue a text-to-image workflow on a running ComfyUI server via its HTTP + WebSocket API.
 
 Usage:
+    cp .env.example .env   # then edit settings
     python 01_api_txt2img.py [--prompt "your prompt"] [--seed 123] [--out result.png]
+
+Settings come from .env (see .env.example); explicit CLI flags override them.
 
 Requires a ComfyUI server on 127.0.0.1:8188 with a Stable Diffusion checkpoint
 in ComfyUI/models/checkpoints/ (see workflows/01_txt2img_basic.json for the
@@ -24,9 +27,16 @@ import urllib.request
 import uuid
 
 import websocket  # pip install websocket-client
+from dotenv import load_dotenv  # pip install python-dotenv
+
+# Load repo-root .env (if present); explicit CLI flags override these values.
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 
 SERVER = os.environ.get("COMFYUI_SERVER", "127.0.0.1:8188")
 WORKFLOW = os.path.join(os.path.dirname(__file__), "..", "workflows", "01_txt2img_basic.json")
+
+DEFAULT_PROMPT = "beautiful scenery, nature, glass bottle landscape, purple galaxy inside the bottle, highly detailed"
+DEFAULT_NEGATIVE = "text, watermark, blurry, low quality"
 
 
 def queue_prompt(prompt: dict, client_id: str) -> str:
@@ -70,30 +80,43 @@ def download_result(prompt_id: str, out_path: str) -> None:
     raise RuntimeError("no images found in prompt history")
 
 
+def _env_int(name):
+    v = os.environ.get(name)
+    return int(v) if v not in (None, "") else None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--prompt", default="beautiful scenery, nature, glass bottle landscape, purple galaxy inside the bottle, highly detailed")
-    ap.add_argument("--negative", default="text, watermark, blurry, low quality")
-    ap.add_argument("--seed", type=int, default=random.randint(0, 2**31))
-    ap.add_argument("--steps", type=int, default=20)
-    ap.add_argument("--out", default="result.png")
+    ap.add_argument("--prompt", default=None, help="overrides TXT2IMG_PROMPT")
+    ap.add_argument("--negative", default=None, help="overrides TXT2IMG_NEGATIVE")
+    ap.add_argument("--seed", type=int, default=None, help="overrides TXT2IMG_SEED")
+    ap.add_argument("--steps", type=int, default=None, help="overrides TXT2IMG_STEPS")
+    ap.add_argument("--out", default=None, help="overrides TXT2IMG_OUT")
     args = ap.parse_args()
+
+    prompt_text = args.prompt or os.environ.get("TXT2IMG_PROMPT") or DEFAULT_PROMPT
+    negative_text = args.negative or os.environ.get("TXT2IMG_NEGATIVE") or DEFAULT_NEGATIVE
+    seed = args.seed if args.seed is not None else _env_int("TXT2IMG_SEED")
+    if seed is None:
+        seed = random.randint(0, 2**31)
+    steps = args.steps if args.steps is not None else _env_int("TXT2IMG_STEPS") or 20
+    out = args.out or os.environ.get("TXT2IMG_OUT") or "result.png"
 
     with open(WORKFLOW) as f:
         prompt = json.load(f)
 
     # Node ids follow workflows/01_txt2img_basic.json:
     # 2 = positive CLIPTextEncode, 3 = negative, 5 = KSampler.
-    prompt["2"]["inputs"]["text"] = args.prompt
-    prompt["3"]["inputs"]["text"] = args.negative
-    prompt["5"]["inputs"]["seed"] = args.seed
-    prompt["5"]["inputs"]["steps"] = args.steps
+    prompt["2"]["inputs"]["text"] = prompt_text
+    prompt["3"]["inputs"]["text"] = negative_text
+    prompt["5"]["inputs"]["seed"] = seed
+    prompt["5"]["inputs"]["steps"] = steps
 
     client_id = str(uuid.uuid4())
     prompt_id = queue_prompt(prompt, client_id)
-    print(f"queued prompt {prompt_id}, waiting for execution...")
+    print(f"queued prompt {prompt_id} (seed={seed}, steps={steps}), waiting for execution...")
     wait_for_done(prompt_id, client_id)
-    download_result(prompt_id, args.out)
+    download_result(prompt_id, out)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,10 @@
 """Image-to-image via the ComfyUI API: upload an input image, then queue the workflow.
 
 Usage:
+    cp .env.example .env   # then edit settings
     python 02_api_img2img.py --input photo.png [--prompt "..."] [--denoise 0.75] [--out result.png]
+
+Settings come from .env (see .env.example); explicit CLI flags override them.
 
 Steps:
     1. POST /upload/image to put the input image into ComfyUI's input folder.
@@ -20,9 +23,15 @@ import uuid
 
 import requests  # pip install requests
 import websocket  # pip install websocket-client
+from dotenv import load_dotenv  # pip install python-dotenv
+
+# Load repo-root .env (if present); explicit CLI flags override these values.
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 
 SERVER = os.environ.get("COMFYUI_SERVER", "127.0.0.1:8188")
 WORKFLOW = os.path.join(os.path.dirname(__file__), "..", "workflows", "02_img2img.json")
+
+DEFAULT_PROMPT = "masterpiece, best quality, vibrant colors, highly detailed"
 
 
 def upload_image(path: str) -> str:
@@ -74,17 +83,38 @@ def download_result(prompt_id: str, out_path: str) -> None:
     raise RuntimeError("no images found in prompt history")
 
 
+def _env_int(name):
+    v = os.environ.get(name)
+    return int(v) if v not in (None, "") else None
+
+
+def _env_float(name):
+    v = os.environ.get(name)
+    return float(v) if v not in (None, "") else None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--input", required=True, help="input image path")
-    ap.add_argument("--prompt", default="masterpiece, best quality, vibrant colors, highly detailed")
-    ap.add_argument("--denoise", type=float, default=0.75,
-                    help="0 = keep input, 1 = ignore input (pure txt2img)")
-    ap.add_argument("--seed", type=int, default=random.randint(0, 2**31))
-    ap.add_argument("--out", default="result_img2img.png")
+    ap.add_argument("--input", default=None, help="overrides IMG2IMG_INPUT")
+    ap.add_argument("--prompt", default=None, help="overrides IMG2IMG_PROMPT")
+    ap.add_argument("--denoise", type=float, default=None, help="overrides IMG2IMG_DENOISE")
+    ap.add_argument("--seed", type=int, default=None, help="overrides IMG2IMG_SEED")
+    ap.add_argument("--out", default=None, help="overrides IMG2IMG_OUT")
     args = ap.parse_args()
 
-    uploaded = upload_image(args.input)
+    input_path = args.input or os.environ.get("IMG2IMG_INPUT")
+    if not input_path:
+        ap.error("--input is required (or set IMG2IMG_INPUT in .env)")
+    prompt_text = args.prompt or os.environ.get("IMG2IMG_PROMPT") or DEFAULT_PROMPT
+    denoise = args.denoise if args.denoise is not None else _env_float("IMG2IMG_DENOISE")
+    if denoise is None:
+        denoise = 0.75
+    seed = args.seed if args.seed is not None else _env_int("IMG2IMG_SEED")
+    if seed is None:
+        seed = random.randint(0, 2**31)
+    out = args.out or os.environ.get("IMG2IMG_OUT") or "result_img2img.png"
+
+    uploaded = upload_image(input_path)
     print(f"uploaded as {uploaded}")
 
     with open(WORKFLOW) as f:
@@ -92,16 +122,16 @@ def main() -> None:
 
     # Node ids follow workflows/02_img2img.json:
     # 2 = positive CLIPTextEncode, 4 = LoadImage, 6 = KSampler.
-    prompt["2"]["inputs"]["text"] = args.prompt
+    prompt["2"]["inputs"]["text"] = prompt_text
     prompt["4"]["inputs"]["image"] = uploaded
-    prompt["6"]["inputs"]["seed"] = args.seed
-    prompt["6"]["inputs"]["denoise"] = args.denoise
+    prompt["6"]["inputs"]["seed"] = seed
+    prompt["6"]["inputs"]["denoise"] = denoise
 
     client_id = str(uuid.uuid4())
     prompt_id = queue_prompt(prompt, client_id)
-    print(f"queued prompt {prompt_id}, waiting for execution...")
+    print(f"queued prompt {prompt_id} (seed={seed}, denoise={denoise}), waiting for execution...")
     wait_for_done(prompt_id, client_id)
-    download_result(prompt_id, args.out)
+    download_result(prompt_id, out)
 
 
 if __name__ == "__main__":

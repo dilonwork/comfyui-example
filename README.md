@@ -61,6 +61,7 @@ nodes re-run thanks to caching.
 
 ```bash
 pip install -r requirements.txt
+cp .env.example .env   # edit settings once; CLI flags override .env
 python examples/01_api_txt2img.py --prompt "a cozy cabin in the snow" --out result.png
 python examples/02_api_img2img.py --input photo.png --denoise 0.75 --out result2.png
 ```
